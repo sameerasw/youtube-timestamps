@@ -11,26 +11,43 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 })
 
-async function fetchTimeComments(videoId) {
-    const comments = await fetchComments(videoId)
-    const timeComments = []
-    for (const comment of comments) {
-        const tsContexts = getTimestampContexts(comment.text)
-        if (isChaptersComment(tsContexts)) {
-            continue
-        }
-        for (const tsContext of tsContexts) {
-            timeComments.push({
-                commentId: comment.commentId,
-                authorAvatar: comment.authorAvatar,
-                authorName: comment.authorName,
-                timestamp: tsContext.timestamp,
-                time: tsContext.time,
-                text: tsContext.text
-            })
-        }
+chrome.commands.onCommand.addListener((command) => {
+    if (command === 'toggle-overlay') {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (tabs[0]) {
+                chrome.tabs.sendMessage(tabs[0].id, { action: 'toggle-overlay' })
+            }
+        })
     }
-    return timeComments
+})
+
+async function fetchTimeComments(videoId) {
+    try {
+        const comments = await fetchComments(videoId)
+        const timeComments = []
+        for (const comment of comments) {
+            const tsContexts = getTimestampContexts(comment.text)
+            if (isChaptersComment(tsContexts)) {
+                continue
+            }
+            for (const tsContext of tsContexts) {
+                timeComments.push({
+                    commentId: comment.commentId,
+                    authorAvatar: comment.authorAvatar,
+                    authorName: comment.authorName,
+                    timestamp: tsContext.timestamp,
+                    time: tsContext.time,
+                    text: tsContext.text
+                })
+            }
+        }
+        return timeComments
+    } catch (e) {
+        if (e.message === 'RATE_LIMIT_REACHED') {
+            return { error: 'RATE_LIMIT_REACHED' }
+        }
+        throw e
+    }
 }
 
 function isChaptersComment(tsContexts) {

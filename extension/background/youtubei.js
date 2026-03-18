@@ -87,6 +87,15 @@ async function fetchVideo(videoId) {
             "X-Youtube-Client-Version": INNERTUBE_CLIENT_VERSION
         }
     })
+    console.log('[YouTube Timestamps] fetchVideo status:', response.status)
+    if (response.status === 429) {
+        console.error('[YouTube Timestamps] Rate limited on fetchVideo')
+        throw new Error('RATE_LIMIT_REACHED')
+    }
+    if (!response.ok) {
+        const text = await response.text()
+        console.warn('[YouTube Timestamps] fetchVideo error response:', text)
+    }
     return await response.json()
 }
 
@@ -108,5 +117,14 @@ async function fetchNext(continuation) {
         },
         body: JSON.stringify(body)
     })
+    console.log('[YouTube Timestamps] fetchNext status:', response.status)
+    if (response.status === 429) {
+        console.error('[YouTube Timestamps] Rate limited on fetchNext')
+        throw new Error('RATE_LIMIT_REACHED')
+    }
+    if (!response.ok) {
+        const text = await response.text()
+        console.warn('[YouTube Timestamps] fetchNext error response:', text)
+    }
     return await response.json()
 }

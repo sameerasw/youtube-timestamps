@@ -8,7 +8,29 @@ let overlayRafId = null
 let lastVideoTime = -1
 let activeOverlayCards = new Map()
 
-main()
+let overlaySide = 'left' // 'left' or 'right'
+let isOverlayHidden = false // session-level
+let simultaneousTriggerCount = 0
+let lastTriggerTime = -1
+
+function init() {
+    if (chrome.storage && chrome.storage.local) {
+        chrome.storage.local.get(['overlaySide'], (result) => {
+            if (result.overlaySide) {
+                overlaySide = result.overlaySide
+                updateOverlaySideClass()
+            }
+        })
+    }
+    main()
+    getOrCreateOverlayContainer()
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init)
+} else {
+    init()
+}
 
 onLocationHrefChange(() => {
     removeBar()
@@ -30,18 +52,51 @@ document.addEventListener('contextmenu', e => {
     }
 }, true)
 
+chrome.runtime.onMessage.addListener((message) => {
+    if (message.action === 'toggle-overlay') {
+        toggleOverlayVisibility()
+    }
+})
+
+function toggleOverlayVisibility() {
+    isOverlayHidden = !isOverlayHidden
+    if (isOverlayHidden) {
+        for (const key of activeOverlayCards.keys()) {
+            dismissOverlayCard(key)
+        }
+    }
+    
+    // Update button opacity if it exists
+    const hideBtn = document.querySelector('.__youtube-timestamps__overlay-controls .__youtube-timestamps__overlay-btn:first-child')
+    if (hideBtn) {
+        hideBtn.style.opacity = isOverlayHidden ? '0.5' : '1'
+    }
+}
+
 function main() {
     const videoId = getVideoId()
     if (!videoId) {
         return
     }
     fetchTimeComments(videoId)
-        .then(timeComments => {
+        .then(result => {
             if (videoId !== getVideoId()) {
                 return
             }
-            currentTimeComments = timeComments
-            addTimeComments(timeComments)
+            if (result && result.error === 'RATE_LIMIT_REACHED') {
+                const rateLimitComment = {
+                    commentId: 'rate-limit-notice',
+                    authorAvatar: chrome.runtime.getURL('icons/icon48.png'),
+                    authorName: 'YouTube Timestamps',
+                    timestamp: '0:05',
+                    time: 5,
+                    text: 'Timed comments rate limited'
+                }
+                currentTimeComments = [rateLimitComment]
+            } else {
+                currentTimeComments = result
+            }
+            addTimeComments(currentTimeComments)
             startOverlayMonitoring()
         })
 }
@@ -136,7 +191,7 @@ function showPreview(timeComment) {
     preview.querySelector('.__youtube-timestamps__preview__avatar').src = timeComment.authorAvatar
     preview.querySelector('.__youtube-timestamps__preview__name').textContent = timeComment.authorName
     const textNode = preview.querySelector('.__youtube-timestamps__preview__text')
-    textNode.innerHTML = ''
+    textNode.textContent = ''
     textNode.appendChild(highlightTextFragment(timeComment.text, timeComment.timestamp))
 
     const tooltipBgWidth = tooltip.querySelector('.ytp-tooltip-bg').style.width
@@ -370,9 +425,68 @@ function getOrCreateOverlayContainer() {
         if (!player) return null
         container = document.createElement('div')
         container.classList.add('__youtube-timestamps__overlay')
+        if (overlaySide === 'right') container.classList.add('right-side')
         player.appendChild(container)
+
+        createOverlayControls(container)
     }
     return container
+}
+
+function createOverlayControls(container) {
+    const controls = document.createElement('div')
+    controls.classList.add('__youtube-timestamps__overlay-controls')
+    container.appendChild(controls)
+
+    // Hide Toggle
+    const hideBtn = document.createElement('div')
+    hideBtn.classList.add('__youtube-timestamps__overlay-btn')
+    hideBtn.title = "Toggle Hide (This video)"
+    
+    const eyeSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
+    eyeSvg.setAttribute("viewBox", "0 0 24 24")
+    const eyePath = document.createElementNS("http://www.w3.org/2000/svg", "path")
+    eyePath.setAttribute("d", "M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z")
+    eyeSvg.appendChild(eyePath)
+    hideBtn.appendChild(eyeSvg)
+
+    hideBtn.onclick = () => {
+        toggleOverlayVisibility()
+    }
+    if (isOverlayHidden) hideBtn.style.opacity = '0.5'
+    controls.appendChild(hideBtn)
+
+    // Side Toggle
+    const sideBtn = document.createElement('div')
+    sideBtn.classList.add('__youtube-timestamps__overlay-btn')
+    sideBtn.title = "Toggle Side (Persistent)"
+    
+    const sideSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
+    sideSvg.setAttribute("viewBox", "0 0 24 24")
+    const sidePath = document.createElementNS("http://www.w3.org/2000/svg", "path")
+    sidePath.setAttribute("d", "M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z")
+    sideSvg.appendChild(sidePath)
+    sideBtn.appendChild(sideSvg)
+
+    sideBtn.onclick = () => {
+        overlaySide = overlaySide === 'left' ? 'right' : 'left'
+        if (chrome.storage && chrome.storage.local) {
+            chrome.storage.local.set({ overlaySide })
+        }
+        updateOverlaySideClass()
+    }
+    controls.appendChild(sideBtn)
+}
+
+function updateOverlaySideClass() {
+    const container = document.querySelector('.__youtube-timestamps__overlay')
+    if (container) {
+        if (overlaySide === 'right') {
+            container.classList.add('right-side')
+        } else {
+            container.classList.remove('right-side')
+        }
+    }
 }
 
 function startOverlayMonitoring() {
@@ -394,13 +508,29 @@ function startOverlayMonitoring() {
             overlayShownSet.clear()
         }
 
+        const now = Date.now()
+        let triggeredInThisTick = []
+
         for (const tc of currentTimeComments) {
             const key = tc.commentId + ':' + tc.time
             if (overlayShownSet.has(key)) continue
             if (currentTime >= tc.time && lastVideoTime < tc.time) {
-                overlayShownSet.add(key)
-                showOverlayCard(tc, key)
+                triggeredInThisTick.push({ tc, key })
             }
+        }
+
+        if (triggeredInThisTick.length > 0) {
+            // Check if we are still within the same "event burst"
+            if (now - lastTriggerTime > 100) {
+                simultaneousTriggerCount = 0
+            }
+
+            for (const { tc, key } of triggeredInThisTick) {
+                overlayShownSet.add(key)
+                showOverlayCard(tc, key, simultaneousTriggerCount)
+                simultaneousTriggerCount++
+            }
+            lastTriggerTime = now
         }
 
         lastVideoTime = currentTime
@@ -433,14 +563,17 @@ function onVideoPause() {
 function onVideoPlay() {
     for (const [key, cardInfo] of activeOverlayCards) {
         if (!cardInfo.timerId) {
+            const duration = OVERLAY_DISPLAY_DURATION + (cardInfo.staggerIndex * 1000)
             cardInfo.timerId = setTimeout(() => {
                 dismissOverlayCard(key)
-            }, OVERLAY_DISPLAY_DURATION)
+            }, duration)
         }
     }
 }
 
-function showOverlayCard(timeComment, key) {
+function showOverlayCard(timeComment, key, staggerIndex = 0) {
+    if (isOverlayHidden) return
+
     const container = getOrCreateOverlayContainer()
     if (!container) return
 
@@ -466,16 +599,18 @@ function showOverlayCard(timeComment, key) {
     text.appendChild(highlightTextFragment(timeComment.text, timeComment.timestamp))
     card.appendChild(text)
 
-    container.prepend(card)
+    container.appendChild(card) // Oldest on top (append newest to bottom)
 
     const video = getVideo()
     const isPaused = video && video.paused
 
+    const duration = OVERLAY_DISPLAY_DURATION + (staggerIndex * 1000)
+
     const timerId = isPaused ? null : setTimeout(() => {
         dismissOverlayCard(key)
-    }, OVERLAY_DISPLAY_DURATION)
+    }, duration)
 
-    activeOverlayCards.set(key, { element: card, timerId })
+    activeOverlayCards.set(key, { element: card, timerId, staggerIndex })
 }
 
 function dismissOverlayCard(key) {

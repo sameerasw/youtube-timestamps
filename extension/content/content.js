@@ -1,11 +1,19 @@
 const PREVIEW_BORDER_SIZE = 2
 const PREVIEW_MARGIN = 8
+const OVERLAY_DISPLAY_DURATION = 7000
+
+let currentTimeComments = []
+let overlayShownSet = new Set()
+let overlayRafId = null
+let lastVideoTime = -1
+let activeOverlayCards = new Map()
 
 main()
 
 onLocationHrefChange(() => {
     removeBar()
     removeContextMenu()
+    removeOverlay()
     main()
 })
 
@@ -32,7 +40,9 @@ function main() {
             if (videoId !== getVideoId()) {
                 return
             }
+            currentTimeComments = timeComments
             addTimeComments(timeComments)
+            startOverlayMonitoring()
         })
 }
 
@@ -351,4 +361,151 @@ function removeContextMenu() {
     if (contextMenu) {
         contextMenu.remove()
     }
+}
+
+function getOrCreateOverlayContainer() {
+    let container = document.querySelector('.__youtube-timestamps__overlay')
+    if (!container) {
+        const player = document.querySelector('#movie_player')
+        if (!player) return null
+        container = document.createElement('div')
+        container.classList.add('__youtube-timestamps__overlay')
+        player.appendChild(container)
+    }
+    return container
+}
+
+function startOverlayMonitoring() {
+    stopOverlayMonitoring()
+    overlayShownSet.clear()
+    lastVideoTime = -1
+
+    const video = getVideo()
+    if (!video) return
+
+    video.addEventListener('pause', onVideoPause)
+    video.addEventListener('play', onVideoPlay)
+
+    function tick() {
+        overlayRafId = requestAnimationFrame(tick)
+        const currentTime = video.currentTime
+
+        if (currentTime < lastVideoTime - 1) {
+            overlayShownSet.clear()
+        }
+
+        for (const tc of currentTimeComments) {
+            const key = tc.commentId + ':' + tc.time
+            if (overlayShownSet.has(key)) continue
+            if (currentTime >= tc.time && lastVideoTime < tc.time) {
+                overlayShownSet.add(key)
+                showOverlayCard(tc, key)
+            }
+        }
+
+        lastVideoTime = currentTime
+    }
+
+    overlayRafId = requestAnimationFrame(tick)
+}
+
+function stopOverlayMonitoring() {
+    if (overlayRafId !== null) {
+        cancelAnimationFrame(overlayRafId)
+        overlayRafId = null
+    }
+    const video = getVideo()
+    if (video) {
+        video.removeEventListener('pause', onVideoPause)
+        video.removeEventListener('play', onVideoPlay)
+    }
+}
+
+function onVideoPause() {
+    for (const [, cardInfo] of activeOverlayCards) {
+        if (cardInfo.timerId) {
+            clearTimeout(cardInfo.timerId)
+            cardInfo.timerId = null
+        }
+    }
+}
+
+function onVideoPlay() {
+    for (const [key, cardInfo] of activeOverlayCards) {
+        if (!cardInfo.timerId) {
+            cardInfo.timerId = setTimeout(() => {
+                dismissOverlayCard(key)
+            }, OVERLAY_DISPLAY_DURATION)
+        }
+    }
+}
+
+function showOverlayCard(timeComment, key) {
+    const container = getOrCreateOverlayContainer()
+    if (!container) return
+
+    const card = document.createElement('div')
+    card.classList.add('__youtube-timestamps__overlay-card')
+
+    const authorRow = document.createElement('div')
+    authorRow.classList.add('__youtube-timestamps__overlay-card__author')
+    card.appendChild(authorRow)
+
+    const avatar = document.createElement('img')
+    avatar.classList.add('__youtube-timestamps__overlay-card__avatar')
+    avatar.src = timeComment.authorAvatar
+    authorRow.appendChild(avatar)
+
+    const name = document.createElement('span')
+    name.classList.add('__youtube-timestamps__overlay-card__name')
+    name.textContent = timeComment.authorName
+    authorRow.appendChild(name)
+
+    const text = document.createElement('div')
+    text.classList.add('__youtube-timestamps__overlay-card__text')
+    text.appendChild(highlightTextFragment(timeComment.text, timeComment.timestamp))
+    card.appendChild(text)
+
+    container.prepend(card)
+
+    const video = getVideo()
+    const isPaused = video && video.paused
+
+    const timerId = isPaused ? null : setTimeout(() => {
+        dismissOverlayCard(key)
+    }, OVERLAY_DISPLAY_DURATION)
+
+    activeOverlayCards.set(key, { element: card, timerId })
+}
+
+function dismissOverlayCard(key) {
+    const cardInfo = activeOverlayCards.get(key)
+    if (!cardInfo) return
+
+    if (cardInfo.timerId) {
+        clearTimeout(cardInfo.timerId)
+    }
+
+    const card = cardInfo.element
+    card.classList.add('dismissing')
+    card.addEventListener('transitionend', () => {
+        card.remove()
+    }, { once: true })
+
+    setTimeout(() => card.remove(), 400)
+
+    activeOverlayCards.delete(key)
+}
+
+function removeOverlay() {
+    stopOverlayMonitoring()
+    for (const [, cardInfo] of activeOverlayCards) {
+        if (cardInfo.timerId) clearTimeout(cardInfo.timerId)
+    }
+    activeOverlayCards.clear()
+    overlayShownSet.clear()
+    currentTimeComments = []
+    lastVideoTime = -1
+    const container = document.querySelector('.__youtube-timestamps__overlay')
+    if (container) container.remove()
 }

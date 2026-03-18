@@ -288,3 +288,21 @@
         color: #3ea6ff;
     }
 }
+
+.__youtube-timestamps__overlay-card__progress {
+    position: absolute;
+    bottom: 4px;
+    left: 0;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.4);
+    width: 80%;
+    transform-origin: center;
+    border-radius: 30px;
+    margin: 0 10%;
+    animation: __youtube-timestamps__progress-shrink linear forwards;
+}
+
+@keyframes __youtube-timestamps__progress-shrink {
+    from { transform: scaleX(1); }
+    to { transform: scaleX(0); }
+}

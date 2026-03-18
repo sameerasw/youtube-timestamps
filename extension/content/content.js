@@ -556,6 +556,8 @@ function onVideoPause() {
         if (cardInfo.timerId) {
             clearTimeout(cardInfo.timerId)
             cardInfo.timerId = null
+            const progress = cardInfo.element.querySelector('.__youtube-timestamps__overlay-card__progress')
+            if (progress) progress.style.animationPlayState = 'paused'
         }
     }
 }
@@ -567,6 +569,8 @@ function onVideoPlay() {
             cardInfo.timerId = setTimeout(() => {
                 dismissOverlayCard(key)
             }, duration)
+            const progress = cardInfo.element.querySelector('.__youtube-timestamps__overlay-card__progress')
+            if (progress) progress.style.animationPlayState = 'running'
         }
     }
 }
@@ -599,18 +603,22 @@ function showOverlayCard(timeComment, key, staggerIndex = 0) {
     text.appendChild(highlightTextFragment(timeComment.text, timeComment.timestamp))
     card.appendChild(text)
 
-    container.appendChild(card) // Oldest on top (append newest to bottom)
-
     const video = getVideo()
     const isPaused = video && video.paused
-
     const duration = OVERLAY_DISPLAY_DURATION + (staggerIndex * 1000)
+    const progress = document.createElement('div')
+    progress.classList.add('__youtube-timestamps__overlay-card__progress')
+    progress.style.animationDuration = `${duration}ms`
+    progress.style.animationPlayState = isPaused ? 'paused' : 'running'
+    card.appendChild(progress)
 
-    const timerId = isPaused ? null : setTimeout(() => {
+    container.appendChild(card)
+    
+    const dismissTimeout = isPaused ? null : setTimeout(() => {
         dismissOverlayCard(key)
     }, duration)
 
-    activeOverlayCards.set(key, { element: card, timerId, staggerIndex })
+    activeOverlayCards.set(key, { element: card, timerId: dismissTimeout, staggerIndex })
 }
 
 function dismissOverlayCard(key) {
